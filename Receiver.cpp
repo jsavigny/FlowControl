@@ -17,6 +17,8 @@
 #include <stdio.h>
 #include <netdb.h>
 #include <string.h>
+#include <signal.h>
+
 
 using namespace std;
 /* Delay to adjust speed of consuming buffer, in milliseconds */
@@ -34,10 +36,11 @@ Byte sent_xonxoff = XON;
 bool send_xon = false, send_xoff = false;
 /* Socket */
 int sockfd; // listen on sock_fd
+struct sockaddr_in *servAddr;
+socklen_t slen;
 /* Functions declaration */
 static Byte *rcvchar(int sockfd, QTYPE *queue);
 static Byte *q_get(QTYPE *, Byte *);
-struct sockaddr_in serv_addr, cli_addr;
 void error(char *msg)
 {
   perror(msg);
@@ -56,68 +59,65 @@ int main(int argc, char *argv[])
     /*
     Insert code here to bind socket to the port number given in argv[1].
     */
-    int iSetOption = 1;
-    sockfd=socket(AF_UNSPEC,SOCK_DGRAM,IPPROTO_UDP);
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (char*)&iSetOption, sizeof(iSetOption));
-    //bzero((char *) &serv_addr, sizeof(serv_addr));
     char * portno=argv[1];
-    /*serv_addr.sin_family = AF_UNIX;
-    serv_addr.sin_port = htons(portno);
-    serv_addr.sin_addr.s_addr = INADDR_ANY;*/
-    struct addrinfo addrCriteria;						// Criteria for address
-	memset(&addrCriteria, 0, sizeof(addrCriteria));		// Zero out structure
-	addrCriteria.ai_family = AF_UNSPEC;					// Any address family
-	addrCriteria.ai_flags = AI_PASSIVE;					// Accept on any address/port
-	addrCriteria.ai_socktype = SOCK_DGRAM;				// Only datagram socket
-	addrCriteria.ai_protocol = IPPROTO_UDP;
-    struct addrinfo *servAddr;
-    int rtnVal = getaddrinfo(NULL, portno, &addrCriteria, &servAddr);
+    memset(&servAddr, 0, sizeof(struct sockaddr_in));
+    servAddr = (sockaddr_in*)calloc(1, slen);
+    servAddr->sin_family = AF_INET;
+    servAddr->sin_port = htons(atoi(portno));
+/*    int rtnVal = getaddrinfo(NULL, portno, &addrCriteria, &servAddr);
 	if (rtnVal != 0) {
 		printf("getaddrinfo() failed");
 		return 0;
-	}
-    printf("Binding pada :%s \n",portno);
-    if ((sockfd, servAddr->ai_addr, servAddr->ai_addrlen) < 0)
+	}*/
+	sockfd = socket(AF_INET,SOCK_DGRAM,0);
+    printf("Binding pada port:%s \n",portno);
+    if (bind(sockfd, (struct sockaddr*)servAddr, sizeof(struct sockaddr_in)) < 0)
         error("ERROR on binding");
-
     /* Initialize XON/XOFF flags */
 
     /* Create child process */
+    pid_t pidch;
     /*** IF PARENT PROCESS ***/
-    while (true) {
-        c = *(rcvchar(sockfd, rxq));
-        /* Quit on end of file */
-        if (c == Endfile) {
-            exit(0);
-        }
-    }
-    /*** ELSE IF CHILD PROCESS ***/
-    while (true) {
-    /* Call q_get */
-    /* Can introduce some delay here. */
-        Byte * test = q_get(rxq,&c);
-        if (test != NULL) {
-            //front not in 0
-            if (rxq->front > 0) {
-                if (rxq->data[rxq->front-1] != Endfile && rxq->data[rxq->front-1] != CR && rxq->data[rxq->front-1] != LF) {
-                    printf("Consuming byte %i: '%c'\n",++con,rxq->data[rxq->front-1]);
-                } else if (rxq->data[rxq->front-1] == Endfile) {
-                    //if endfile
-                    printf("End of File accepted.\n");
-                    exit(0);
-                }
-            } else {
-                if (rxq->data[7] != Endfile && rxq->data[7] != CR && rxq->data[7] != LF) {
-                    printf("Consuming byte %i: '%c'\n",++con,rxq->data[7]);
-                } else if (rxq->data[7] == Endfile) {
-                    //if endfile
-                    printf("End of File accepted.\n");
-                    exit(0);
-                }
+    if ((pidch = fork()) == 0) {
+        while (true) {
+            c = *(rcvchar(sockfd, rxq));
+            /* Quit on end of file */
+            if (c == Endfile) {
+                exit(0);
             }
         }
-        //delay
-        usleep(DELAY*1000);
+        kill(pidch, SIGKILL);
+    }
+
+    /*** ELSE IF CHILD PROCESS ***/
+    else {
+        while (true) {
+        /* Call q_get */
+        /* Can introduce some delay here. */
+            Byte * test = q_get(rxq,&c);
+            if (test != NULL) {
+                //front not in 0
+                if (rxq->front > 0) {
+                    if (rxq->data[rxq->front-1] != Endfile && rxq->data[rxq->front-1] != CR && rxq->data[rxq->front-1] != LF) {
+                        printf("Consuming byte %i: '%c'\n",++con,rxq->data[rxq->front-1]);
+                    } else if (rxq->data[rxq->front-1] == Endfile) {
+                        //if endfile
+                        printf("End of File accepted.\n");
+                        exit(0);
+                    }
+                } else {
+                    if (rxq->data[7] != Endfile && rxq->data[7] != CR && rxq->data[7] != LF) {
+                        printf("Consuming byte %i: '%c'\n",++con,rxq->data[7]);
+                    } else if (rxq->data[7] == Endfile) {
+                        //if endfile
+                        printf("End of File accepted.\n");
+                        exit(0);
+                    }
+                }
+            }
+            //delay
+            usleep(DELAY*1000);
+        }
 
     }
     close(sockfd);
@@ -180,7 +180,7 @@ static Byte *rcvchar(int sockfd, QTYPE *queue)
 		return buffer;
 	}
 
-    }
+}
     /* q_get returns a pointer to the buffer where data is read or NULL if
     * buffer is empty.
     */
